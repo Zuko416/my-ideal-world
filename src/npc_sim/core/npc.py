@@ -1,8 +1,17 @@
 """NPC entity definition and NPCManager collection."""
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 
-from npc_sim.core.traits import CHILD_AGE_THRESHOLD
+from npc_sim.core.traits import (
+    CHILD_AGE_THRESHOLD,
+    TODDLER_MAX_AGE,
+    YOUNG_CHILD_MAX_AGE,
+    ELDER_AGE_THRESHOLD,
+    AgeGroup,
+    get_age_group,
+    Traits,
+    PsychologyState,
+)
 from npc_sim.memory.memory import Memory, calculate_sentiment
 from npc_sim.memory.knowledge import Belief, update_belief, get_believed_location
 from npc_sim.decision.utility_ai import (
@@ -14,7 +23,13 @@ from npc_sim.decision.utility_ai import (
     decide_child_threat_response,
 )
 from npc_sim.needs.needs import update_npc_needs
-from npc_sim.relationships.relationships import get_relationship, adjust_relationship
+from npc_sim.relationships.relationships import (
+    Relationship,
+    get_relationship,
+    get_relationship_record,
+    adjust_relationship,
+    adjust_relationship_dimension,
+)
 from npc_sim.relationships.family import get_guardians, get_known_nearby_guardian
 
 if TYPE_CHECKING:
@@ -26,12 +41,12 @@ class NPC:
     """Core autonomous NPC agent in the survival world."""
     name: str
     age: int
-    bravery: float
-    kindness: float
-    aggression: float
-    sociability: float
-    intelligence: float
-    location: str
+    bravery: float = 0.5
+    kindness: float = 0.5
+    aggression: float = 0.5
+    sociability: float = 0.5
+    intelligence: float = 0.5
+    location: str = "house"
     hunger: float = 20.0
     thirst: float = 20.0
     fatigue: float = 10.0
@@ -41,21 +56,104 @@ class NPC:
     goals: list = field(default_factory=list)     # list[Goal]
     intention: Optional[Intention] = None
     family: dict = field(default_factory=dict)
-    fear: float = 0.1
     attachment: dict = field(default_factory=dict)
     alive: bool = True
     traveling_to: Optional[str] = None
     travel_days_left: int = 0
+    stability: float = 0.5
+    psychology: PsychologyState = field(default_factory=PsychologyState)
+
+    def __post_init__(self):
+        # Sync initial fear field if provided during legacy constructor calls
+        if hasattr(self, "_initial_fear"):
+            self.psychology.fear = self._initial_fear
+
+    @property
+    def fear(self) -> float:
+        return self.psychology.fear
+
+    @fear.setter
+    def fear(self, val: float) -> None:
+        self.psychology.fear = max(0.0, min(1.0, val))
+
+    @property
+    def stress(self) -> float:
+        return self.psychology.stress
+
+    @stress.setter
+    def stress(self, val: float) -> None:
+        self.psychology.stress = max(0.0, min(1.0, val))
+
+    @property
+    def morale(self) -> float:
+        return self.psychology.morale
+
+    @morale.setter
+    def morale(self, val: float) -> None:
+        self.psychology.morale = max(0.0, min(1.0, val))
+
+    @property
+    def age_group(self) -> AgeGroup:
+        return get_age_group(self.age)
+
+    @property
+    def is_toddler(self) -> bool:
+        return self.age <= TODDLER_MAX_AGE
+
+    @property
+    def is_young_child(self) -> bool:
+        return self.age <= YOUNG_CHILD_MAX_AGE
 
     @property
     def is_child(self) -> bool:
         return self.age < CHILD_AGE_THRESHOLD
 
+    @property
+    def is_elder(self) -> bool:
+        return self.age >= ELDER_AGE_THRESHOLD
+
+    @property
+    def can_fight(self) -> bool:
+        """Physical capability to engage in lethal combat."""
+        return self.age >= YOUNG_CHILD_MAX_AGE + 1
+
+    @property
+    def can_work(self) -> bool:
+        """Physical and developmental capability to perform structured community labor."""
+        return self.age >= CHILD_AGE_THRESHOLD
+
+    @property
+    def labor_efficiency(self) -> float:
+        """Work output multiplier based on age and stamina."""
+        if self.is_child:
+            return 0.0
+        elif self.is_elder:
+            return 0.6
+        return 1.0
+
     def rel(self, other: str) -> float:
         return get_relationship(self.relationships, other)
 
+    def rel_record(self, other: str) -> Relationship:
+        return get_relationship_record(self.relationships, other)
+
     def adjust_rel(self, other: str, delta: float) -> None:
         adjust_relationship(self.relationships, other, delta)
+
+    def adjust_rel_dim(self, other: str, dimension: str, delta: float) -> None:
+        adjust_relationship_dimension(self.relationships, other, dimension, delta)
+
+    def trust_in(self, other: str) -> float:
+        return self.rel_record(other).trust
+
+    def respect_for(self, other: str) -> float:
+        return self.rel_record(other).respect
+
+    def attachment_to(self, other: str) -> float:
+        # Check attachment dictionary or relationship dimension
+        if other in self.attachment:
+            return self.attachment[other]
+        return self.rel_record(other).attachment
 
     def sentiment(self, other: str, recent_days: Optional[int] = None, today: Optional[int] = None) -> float:
         return calculate_sentiment(self.memories, other, recent_days=recent_days, today=today)
@@ -73,6 +171,10 @@ class NPC:
         self.memories.append(Memory(text, importance, emotion, day, about, hearsay))
         if about and rel_delta is not None:
             self.adjust_rel(about, rel_delta * (0.5 if hearsay else 1.0))
+            if emotion in ("resentment", "fear"):
+                self.adjust_rel_dim(about, "trust", -0.1 * (0.5 if hearsay else 1.0))
+            elif emotion in ("gratitude", "affection"):
+                self.adjust_rel_dim(about, "trust", 0.1 * (0.5 if hearsay else 1.0))
 
     def believe(self, name: str, location: str, confidence: float, day: int) -> None:
         """Update belief only if new info is more confident or more recent."""
