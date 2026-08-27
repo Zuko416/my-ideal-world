@@ -32,22 +32,8 @@ class FamilySystem:
         """Establish bidirectional family relationship and initial attachments."""
         a.family[b.name] = a_to_b_role
         b.family[a.name] = b_to_a_role
-        base_affinity = {
-            "mother": 0.9,
-            "father": 0.9,
-            "child": 0.9,
-            "sibling": 0.6,
-            "spouse": 0.85,
-            "grandfather": 0.85,
-            "grandmother": 0.85,
-            "grandchild": 0.85,
-            "aunt": 0.6,
-            "uncle": 0.6,
-            "niece": 0.6,
-            "nephew": 0.6,
-        }
-        a.adjust_rel(b.name, base_affinity.get(a_to_b_role, 0.5))
-        b.adjust_rel(a.name, base_affinity.get(b_to_a_role, 0.5))
+        a.adjust_rel(b.name, 0.9)
+        b.adjust_rel(a.name, 0.9)
 
         # Multi-dimensional trust, respect, and attachment setup
         adjust_relationship_dimension(a.relationships, b.name, "trust", 0.8)

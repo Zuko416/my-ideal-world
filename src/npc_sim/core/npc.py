@@ -12,6 +12,13 @@ from npc_sim.core.traits import (
     Traits,
     PsychologyState,
 )
+from npc_sim.core.schedule import (
+    ActivityType,
+    Chronotype,
+    ScheduleBlock,
+    DailySchedule,
+    create_daily_schedule,
+)
 from npc_sim.memory.memory import Memory, calculate_sentiment
 from npc_sim.memory.knowledge import Belief, update_belief, get_believed_location
 from npc_sim.decision.utility_ai import (
@@ -62,6 +69,12 @@ class NPC:
     travel_days_left: int = 0
     stability: float = 0.5
     psychology: PsychologyState = field(default_factory=PsychologyState)
+    chronotype: Chronotype = Chronotype.NORMAL
+    occupation: str = "resident"
+    home_location: str = "house"
+    work_location: Optional[str] = None
+    schedule: Optional[DailySchedule] = None
+    current_activity: ActivityType = ActivityType.IDLE
 
     def __post_init__(self):
         # Sync initial fear field if provided during legacy constructor calls
@@ -131,6 +144,18 @@ class NPC:
             return 0.6
         return 1.0
 
+    def get_scheduled_activity(self, hour: int) -> ScheduleBlock:
+        """Retrieve scheduled desire for a specific hour, lazily building schedule if missing."""
+        if self.schedule is None:
+            self.schedule = create_daily_schedule(
+                age=self.age,
+                chronotype=self.chronotype,
+                occupation=self.occupation,
+                home_location=self.home_location,
+                work_location=self.work_location,
+            )
+        return self.schedule.get_desired_activity(hour)
+
     def rel(self, other: str) -> float:
         return get_relationship(self.relationships, other)
 
@@ -189,14 +214,20 @@ class NPC:
     def known_nearby_guardian(self, here: str) -> Optional[str]:
         return get_known_nearby_guardian(self.family, self.believed_location, here)
 
-    def update_needs(self) -> None:
-        update_npc_needs(self)
+    def update_needs(self, hours: float = 24.0) -> None:
+        update_npc_needs(self, hours=hours)
 
     def top_goal(self) -> Optional[Goal]:
         return get_top_goal(self.goals)
 
-    def score_actions(self, others_present: List[str], loc: "Location", connections: List[str]) -> Dict[str, float]:
-        return score_npc_actions(self, others_present, loc, connections)
+    def score_actions(
+        self,
+        others_present: List[str],
+        loc: "Location",
+        connections: List[str],
+        current_hour: Optional[int] = None,
+    ) -> Dict[str, float]:
+        return score_npc_actions(self, others_present, loc, connections, current_hour=current_hour)
 
     def decide_on_threat(
         self,

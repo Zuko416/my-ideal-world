@@ -1,8 +1,9 @@
-"""World coordinator managing simulation ticks, locations, and threats."""
+"""World simulation manager, location registry, and event dispatch."""
 import random
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple, Optional, Set, FrozenSet
 
 from npc_sim.core.npc import NPC, NPCManager
+from npc_sim.core.schedule import ActivityType
 from npc_sim.world.location import Location
 from npc_sim.world.travel import (
     DEFAULT_CONNECTIONS,
@@ -14,27 +15,66 @@ from npc_sim.world.travel import (
 )
 from npc_sim.interactions.social import handle_talk, handle_work_crime
 from npc_sim.simulation.statistics import EventLog
+from npc_sim.simulation.clock import SimulationClock
 
 
 class World:
-    """The game environment containing locations, time progression, and world entities."""
+    """Central simulation state, managing the location graph, NPCs, and time progression."""
 
     CONNECTIONS = DEFAULT_CONNECTIONS
 
     def __init__(self):
-        self.day: int = 0
-        self.npcs: NPCManager = NPCManager()
-        self.friend_pairs: Set[frozenset] = set()
-        self.events: EventLog = EventLog()
-        self.locations: Dict[str, Location] = {n: Location(n) for n in self.CONNECTIONS}
+        self.locations: Dict[str, Location] = {
+            "house": Location("house"),
+            "farm": Location("farm"),
+            "clinic": Location("clinic"),
+            "watchtower": Location("watchtower"),
+            "forest": Location("forest", danger=0.4),
+        }
+        self.npcs = NPCManager()
+        self.events = EventLog()
+        self.clock = SimulationClock(day=1, hour=8, minute=0)
+        self.friend_pairs: Set[FrozenSet[str]] = set()
 
-    def _bfs_route(self, start: str, target: str) -> List[str]:
-        return bfs_route(self.CONNECTIONS, start, target)
+    @property
+    def day(self) -> int:
+        return self.clock.day
+
+    @day.setter
+    def day(self, val: int) -> None:
+        self.clock.day = val
+
+    def tick_minutes(self, minutes: int = 60) -> None:
+        """Advance the simulation by a specified number of minutes."""
+        self.clock.tick(minutes)
+
+    def tick_hour(self) -> None:
+        """Advance the simulation by one hour, updating needs and actions."""
+        current_hour = self.clock.hour
+        for name in self.npcs.alive_names():
+            npc = self.npcs.npcs[name]
+            npc.update_needs(hours=1.0)
+            others = [o for o in self.npcs.at(npc.location) if o != name]
+            loc = self.locations.get(npc.location, Location(npc.location))
+            scores = npc.score_actions(others, loc, self.CONNECTIONS.get(npc.location, []), current_hour=current_hour)
+            # Pick highest utility action
+            if scores:
+                best_action = max(scores, key=scores.get)
+                if best_action == "eat":
+                    npc.hunger = max(0.0, npc.hunger - 15.0)
+                elif best_action == "drink":
+                    npc.thirst = max(0.0, npc.thirst - 20.0)
+                elif best_action == "sleep":
+                    npc.fatigue = max(0.0, npc.fatigue - 15.0)
+
+        self.clock.tick(60)
 
     def form_intention(self, npc: NPC) -> None:
+        """Derive an active route intention for an NPC towards their goal destination."""
         form_intention(npc, self.CONNECTIONS)
 
     def advance_intention(self, npc: NPC) -> bool:
+        """Advance an NPC along their planned route."""
         return advance_intention(npc, self)
 
     def start_travel(self, npc: NPC, dest: str) -> bool:
@@ -99,7 +139,6 @@ class World:
                 self.events.record(self.day, f"{name} ran to trusted {target}.")
             elif action == "hide":
                 self.events.record(self.day, f"{name} lost sight of everyone and hid.")
-                # child no longer perceives family here -> belief goes stale, may trigger a search goal
             elif action == "attack" and random.random() < danger * 0.18:
                 npc.alive = False
                 self.events.record(self.day, f"{name} died fighting.")

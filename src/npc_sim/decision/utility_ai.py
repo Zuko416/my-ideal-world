@@ -1,6 +1,7 @@
 """Goal, Intention, and Utility AI decision evaluations."""
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple, TYPE_CHECKING
+from npc_sim.core.schedule import ActivityType
 
 if TYPE_CHECKING:
     from npc_sim.core.npc import NPC
@@ -26,6 +27,7 @@ class Intention:
     """An active commitment to pursue a Goal via a multi-step plan."""
     goal: Goal
     plan: list = field(default_factory=list)  # list of location names, retained across days
+    destination: Optional[str] = None
 
 
 def get_top_goal(goals: List[Goal]) -> Optional[Goal]:
@@ -40,22 +42,65 @@ def score_npc_actions(
     others_present: List[str],
     loc: "Location",
     connections: List[str],
+    current_hour: Optional[int] = None,
 ) -> Dict[str, float]:
     """Calculate utility scores for available daily life actions."""
-    scores: Dict[str, float] = {
-        "work": npc.intelligence * 0.1,
-        "talk": npc.sociability * 0.4,
-    }
-    if npc.hunger > 55:
-        scores["eat"] = npc.hunger / 100
-    if npc.thirst > 55:
-        scores["drink"] = npc.thirst / 100
-    if npc.fatigue > 70:
-        scores["sleep"] = npc.fatigue / 100
+    if current_hour is None:
+        # Legacy exact scoring behavior
+        scores: Dict[str, float] = {
+            "work": npc.intelligence * 0.1,
+            "talk": npc.sociability * 0.4,
+        }
+        if npc.hunger > 55:
+            scores["eat"] = npc.hunger / 100
+        if npc.thirst > 55:
+            scores["drink"] = npc.thirst / 100
+        if npc.fatigue > 70:
+            scores["sleep"] = npc.fatigue / 100
 
-    g = npc.top_goal()
-    if g and connections:
-        scores["pursue_goal"] = g.score() + 0.2
+        g = npc.top_goal()
+        if g and connections:
+            scores["pursue_goal"] = g.score() + 0.2
+        return scores
+
+    # Fine-grained hourly schedule scoring
+    scores = {}
+    if others_present:
+        scores["talk"] = npc.sociability * 0.5
+        if npc.is_child:
+            scores["talk"] += 0.2
+    else:
+        scores["talk"] = 0.0
+
+    scores["work"] = (1.0 - npc.sociability) * 0.3 * (npc.labor_efficiency if hasattr(npc, "labor_efficiency") else 1.0)
+    scores["eat"] = (npc.hunger / 100.0) * 0.8
+    scores["drink"] = (npc.thirst / 100.0) * 0.8
+    scores["sleep"] = (npc.fatigue / 100.0) * 0.8
+
+    block = npc.get_scheduled_activity(current_hour)
+    activity = block.activity
+    weight = block.base_weight
+
+    if activity == ActivityType.WORK and npc.can_work:
+        scores["work"] = max(scores.get("work", 0.0), weight)
+    elif activity == ActivityType.SCHOOL and npc.is_child:
+        scores["school"] = weight
+    elif activity == ActivityType.SLEEP:
+        scores["sleep"] = max(scores.get("sleep", 0.0), weight + (npc.fatigue / 100.0) * 0.4)
+    elif activity == ActivityType.MEAL:
+        scores["eat"] = max(scores.get("eat", 0.0), weight)
+        scores["drink"] = max(scores.get("drink", 0.0), weight)
+    elif activity in (ActivityType.SOCIALIZE, ActivityType.RECREATION):
+        if others_present:
+            scores["talk"] = max(scores.get("talk", 0.0), weight)
+        else:
+            scores["recreation"] = weight
+    elif activity in (ActivityType.REST, ActivityType.IDLE):
+        scores["rest"] = weight
+
+    top_g = npc.top_goal()
+    if top_g and connections:
+        scores["pursue_goal"] = top_g.score() + 0.2
     return scores
 
 
