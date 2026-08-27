@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "npc-sim"
+version = "0.6.0"
+description = "NPC social simulation prototype for a zombie survival game"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src", "."]

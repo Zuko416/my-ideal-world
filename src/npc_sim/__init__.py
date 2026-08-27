@@ -1,0 +1,1 @@
+"""NPC Social Simulation Package."""
