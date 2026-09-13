@@ -175,7 +175,6 @@ class NPC:
         return self.rel_record(other).respect
 
     def attachment_to(self, other: str) -> float:
-        # Check attachment dictionary or relationship dimension
         if other in self.attachment:
             return self.attachment[other]
         return self.rel_record(other).attachment
@@ -194,6 +193,10 @@ class NPC:
         hearsay: bool = False,
     ) -> None:
         self.memories.append(Memory(text, importance, emotion, day, about, hearsay))
+        if len(self.memories) > 50:
+            self.memories.sort(key=lambda m: (m.importance, m.day))
+            self.memories.pop(0)
+
         if about and rel_delta is not None:
             self.adjust_rel(about, rel_delta * (0.5 if hearsay else 1.0))
             if emotion in ("resentment", "fear"):
@@ -254,14 +257,11 @@ class NPCManager:
     def add(self, npc: NPC) -> None:
         self.npcs[npc.name] = npc
 
-    def alive_names(self) -> List[str]:
-        return [n for n, npc in self.npcs.items() if npc.alive]
-
     def is_alive(self, name: str) -> bool:
         return name in self.npcs and self.npcs[name].alive
 
+    def alive_names(self) -> List[str]:
+        return [name for name, npc in self.npcs.items() if npc.alive]
+
     def at(self, location_name: str) -> List[str]:
-        return [
-            n for n in self.alive_names()
-            if self.npcs[n].location == location_name and not self.npcs[n].traveling_to
-        ]
+        return [name for name in self.alive_names() if self.npcs[name].location == location_name]
